@@ -445,6 +445,7 @@ export async function fetchEmployeesFromBackend(params = {}) {
           joiningDate: u.joiningDate ? new Date(u.joiningDate).toISOString().slice(0, 10) : '2023-01-01',
           reportingManager: u.reportingManager || 'Sarah Jenkins (VP of People)',
           employmentStatus: u.employmentStatus || 'Active',
+          invitationStatus: u.invitationStatus || 'ACCEPTED',
           attendanceStatus: u.employmentStatus === 'On Leave' ? 'on_leave' : 'present',
           address: u.address || '100 S Wacker Dr',
           city: u.city || 'Chicago',
@@ -507,6 +508,7 @@ export async function fetchEmployeeByIdFromBackend(id) {
         joiningDate: u.joiningDate ? new Date(u.joiningDate).toISOString().slice(0, 10) : '2023-01-01',
         reportingManager: u.reportingManager || 'Sarah Jenkins (VP of People)',
         employmentStatus: u.employmentStatus || 'Active',
+        invitationStatus: u.invitationStatus || 'ACCEPTED',
         attendanceStatus: u.employmentStatus === 'On Leave' ? 'on_leave' : 'present',
         address: u.address || '100 S Wacker Dr',
         city: u.city || 'Chicago',
@@ -554,7 +556,7 @@ export async function addEmployeeBackend(employeeData) {
 
   if (res.success && res.employee) {
     addEmployee(res.employee);
-    return res.employee;
+    return res;
   }
 
   const errorMsg = res.message || res.data?.message || 'Failed to create employee record on backend';

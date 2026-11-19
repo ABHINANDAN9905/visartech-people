@@ -137,11 +137,23 @@ export default function Employees() {
         });
       } else {
         // Add new via backend
-        await addEmployeeBackend(formData);
-        setFeedbackAlert({
-          type: 'success',
-          message: `New employee "${formData.firstName} ${formData.lastName}" (${formData.id}) enrolled in directory.`,
-        });
+        const res = await addEmployeeBackend(formData);
+        if (res && res.invitationSent) {
+          setFeedbackAlert({
+            type: 'success',
+            message: `Employee "${formData.firstName} ${formData.lastName}" (${formData.id}) enrolled and invitation email sent to ${formData.email}.`,
+          });
+        } else if (res && res.invitationError) {
+          setFeedbackAlert({
+            type: 'warning',
+            message: `Employee "${formData.firstName} ${formData.lastName}" enrolled in directory, but invitation email failed: ${res.invitationError}. You can resend the invitation from the directory.`,
+          });
+        } else {
+          setFeedbackAlert({
+            type: 'success',
+            message: `New employee "${formData.firstName} ${formData.lastName}" (${formData.id}) enrolled in directory.`,
+          });
+        }
       }
       syncLocalData();
       fetchLiveEmployees();
@@ -192,17 +204,30 @@ export default function Employees() {
   const handleResendInvitation = async (emp) => {
     try {
       const res = await resendEmployeeInvitationBackend(emp.id || emp.employeeId);
-      setFeedbackAlert({
-        type: 'success',
-        message: res.message || `Invitation resent to ${emp.email}.`,
-      });
-      setTimeout(() => setFeedbackAlert(null), 5000);
+      if (res && res.invitationSent) {
+        setFeedbackAlert({
+          type: 'success',
+          message: res.message || `Invitation successfully sent to ${emp.email}.`,
+        });
+      } else if (res && res.invitationError) {
+        setFeedbackAlert({
+          type: 'warning',
+          message: `Fresh invitation token generated, but email delivery failed: ${res.invitationError}`,
+        });
+      } else {
+        setFeedbackAlert({
+          type: 'success',
+          message: res.message || `Invitation resent to ${emp.email}.`,
+        });
+      }
+      fetchLiveEmployees();
+      setTimeout(() => setFeedbackAlert(null), 6000);
     } catch (err) {
       setFeedbackAlert({
         type: 'error',
         message: err.message || 'Failed to resend invitation.',
       });
-      setTimeout(() => setFeedbackAlert(null), 5000);
+      setTimeout(() => setFeedbackAlert(null), 6000);
     }
   };
 
@@ -384,6 +409,7 @@ export default function Employees() {
                   <th className="py-3 px-4">Department</th>
                   <th className="py-3 px-4">Joining Date</th>
                   <th className="py-3 px-4">Employment Status</th>
+                  <th className="py-3 px-4">Invitation Status</th>
                   <th className="py-3 px-6 text-right">Actions</th>
                 </tr>
               </thead>
@@ -400,8 +426,8 @@ export default function Employees() {
                             emp.attendanceStatus === 'present'
                               ? 'online'
                               : emp.attendanceStatus === 'late'
-                              ? 'away'
-                              : 'offline'
+                                ? 'away'
+                                : 'offline'
                           }
                         />
                         <div className="min-w-0">
@@ -453,9 +479,55 @@ export default function Employees() {
                       )}
                     </td>
 
+                    {/* Invitation Status */}
+                    <td className="py-3.5 px-4">
+                      {emp.invitationStatus === 'ACCEPTED' && (
+                        <Badge variant="success" size="sm" dot>
+                          Accepted
+                        </Badge>
+                      )}
+                      {emp.invitationStatus === 'SENT' && (
+                        <Badge variant="info" size="sm" dot>
+                          Sent
+                        </Badge>
+                      )}
+                      {emp.invitationStatus === 'PENDING' && (
+                        <Badge variant="pending" size="sm" dot>
+                          Pending
+                        </Badge>
+                      )}
+                      {emp.invitationStatus === 'EXPIRED' && (
+                        <Badge variant="neutral" size="sm" dot>
+                          Expired
+                        </Badge>
+                      )}
+                      {emp.invitationStatus === 'FAILED' && (
+                        <Badge variant="rejected" size="sm" dot>
+                          Failed
+                        </Badge>
+                      )}
+                      {(!emp.invitationStatus || !['ACCEPTED', 'SENT', 'PENDING', 'EXPIRED', 'FAILED'].includes(emp.invitationStatus)) && (
+                        <Badge variant="success" size="sm" dot>
+                          Accepted
+                        </Badge>
+                      )}
+                    </td>
+
                     {/* Actions Menu */}
                     <td className="py-3.5 px-6 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        {emp.invitationStatus && emp.invitationStatus !== 'ACCEPTED' && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            leftIcon={Send}
+                            onClick={() => handleResendInvitation(emp)}
+                            title="Resend onboarding invitation email"
+                            className="text-brand-blue border-brand-blue/30 hover:bg-brand-blue/5"
+                          >
+                            Resend
+                          </Button>
+                        )}
                         <Button
                           variant="secondary"
                           size="sm"

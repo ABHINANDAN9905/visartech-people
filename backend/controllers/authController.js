@@ -42,8 +42,8 @@ export async function login(req, res) {
       });
     }
 
-    // Uninvited / pending employees cannot log in until they accept the invitation and set a password
-    if (user.invitationStatus === 'PENDING' || !user.passwordHash) {
+    // Uninvited / unactivated employees cannot log in until they accept the invitation and set a password
+    if (user.invitationStatus !== 'ACCEPTED' || !user.passwordHash) {
       return res.status(401).json({
         success: false,
         message: GENERIC_AUTH_ERROR,
@@ -112,7 +112,7 @@ export async function validateInvitation(req, res) {
     const user = await User.findOne({
       invitationToken: hashedToken,
       invitationExpires: { $gt: new Date() },
-      invitationStatus: 'PENDING',
+      invitationStatus: { $ne: 'ACCEPTED' },
     });
 
     if (!user) {
@@ -172,7 +172,7 @@ export async function acceptInvitation(req, res) {
     const user = await User.findOne({
       invitationToken: hashedToken,
       invitationExpires: { $gt: new Date() },
-      invitationStatus: 'PENDING',
+      invitationStatus: { $ne: 'ACCEPTED' },
     }).select('+invitationToken +invitationExpires +passwordHash');
 
     if (!user) {

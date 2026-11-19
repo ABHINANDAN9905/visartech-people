@@ -220,23 +220,31 @@ export async function createEmployee(req, res) {
 
         if (emailResult.success) {
           emailSent = true;
+          newEmployee.invitationStatus = 'SENT';
+          await newEmployee.save();
           console.log(`[Employee Enrollment] Invitation email successfully dispatched to ${cleanEmail}. MessageId: ${emailResult.messageId}`);
         } else {
           emailDeliveryError = emailResult.message || 'SMTP server rejected email delivery.';
+          newEmployee.invitationStatus = 'FAILED';
+          await newEmployee.save();
           console.error(`[Employee Enrollment] Invitation email delivery failed for ${cleanEmail}: ${emailDeliveryError}`);
         }
       } catch (emailErr) {
         emailDeliveryError = emailErr.message || 'Unexpected SMTP error during dispatch.';
+        newEmployee.invitationStatus = 'FAILED';
+        await newEmployee.save();
         console.error(`[Employee Enrollment] Exception while sending invitation to ${cleanEmail}:`, emailErr.message);
       }
     } else if (cleanEmail.endsWith('.demo')) {
+      newEmployee.invitationStatus = 'SENT';
+      await newEmployee.save();
       console.log(`[Employee Enrollment] Demo email detected (${cleanEmail}), simulated invitation generated.`);
     }
 
     return res.status(201).json({
       success: true,
       message: emailSent
-        ? `Employee ${cleanEmployeeId} (${firstName} ${lastName}) enrolled successfully and invitation email sent.`
+        ? `Employee ${cleanEmployeeId} (${firstName} ${lastName}) enrolled successfully and invitation email sent to ${cleanEmail}.`
         : `Employee ${cleanEmployeeId} (${firstName} ${lastName}) enrolled successfully.`,
       employee: newEmployee.toJSON(),
       invitationSent: emailSent,
@@ -457,6 +465,7 @@ export async function resendEmployeeInvitation(req, res) {
     }
 
     const rawToken = employee.generateInvitationToken();
+    employee.invitationStatus = 'PENDING';
     await employee.save();
 
     const frontendBase = (process.env.FRONTEND_URL || process.env.CLIENT_ORIGIN || 'https://visartech-people.vercel.app').replace(/\/+$/, '');
@@ -479,16 +488,24 @@ export async function resendEmployeeInvitation(req, res) {
 
         if (emailResult.success) {
           emailSent = true;
+          employee.invitationStatus = 'SENT';
+          await employee.save();
           console.log(`[Resend Invitation] Invitation email successfully dispatched to ${employee.email}. MessageId: ${emailResult.messageId}`);
         } else {
           emailDeliveryError = emailResult.message || 'SMTP server rejected email delivery.';
+          employee.invitationStatus = 'FAILED';
+          await employee.save();
           console.error(`[Resend Invitation] Delivery failed for ${employee.email}: ${emailDeliveryError}`);
         }
       } catch (emailErr) {
         emailDeliveryError = emailErr.message || 'Unexpected SMTP error during dispatch.';
+        employee.invitationStatus = 'FAILED';
+        await employee.save();
         console.error(`[Resend Invitation] Exception while resending invitation to ${employee.email}:`, emailErr.message);
       }
     } else if (employee.email.endsWith('.demo')) {
+      employee.invitationStatus = 'SENT';
+      await employee.save();
       console.log(`[Resend Invitation] Demo email detected (${employee.email}), fresh simulated invitation generated.`);
     }
 
@@ -496,7 +513,8 @@ export async function resendEmployeeInvitation(req, res) {
       success: true,
       message: emailSent
         ? `A fresh invitation link has been generated and sent to ${employee.email}.`
-        : `A fresh invitation link has been generated for ${employee.email}.`,
+        : `A fresh invitation link has been generated for ${employee.email}, but email delivery failed: ${emailDeliveryError}`,
+      employee: employee.toJSON(),
       invitationSent: emailSent,
       invitationError: emailSent ? null : emailDeliveryError,
     });

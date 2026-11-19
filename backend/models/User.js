@@ -128,8 +128,8 @@ const userSchema = new mongoose.Schema(
     },
     invitationStatus: {
       type: String,
-      enum: ['PENDING', 'ACCEPTED'],
-      default: 'ACCEPTED',
+      enum: ['PENDING', 'SENT', 'ACCEPTED', 'EXPIRED', 'FAILED'],
+      default: 'PENDING',
       index: true,
     },
   },
@@ -138,6 +138,11 @@ const userSchema = new mongoose.Schema(
     toJSON: {
       virtuals: true,
       transform: function (doc, ret) {
+        if (ret.invitationStatus && ret.invitationStatus !== 'ACCEPTED') {
+          if (doc.invitationExpires && new Date(doc.invitationExpires) < new Date()) {
+            ret.invitationStatus = 'EXPIRED';
+          }
+        }
         delete ret.__v;
         delete ret.passwordHash;
         delete ret.invitationToken;
