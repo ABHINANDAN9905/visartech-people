@@ -161,6 +161,45 @@ app.get(['/api/health/db', '/health/db'], async (req, res) => {
   });
 });
 
+// 3. Email Delivery & SMTP Diagnostic Health (Safely masked, NO credentials exposed)
+app.get(['/api/health/email', '/health/email'], async (req, res) => {
+  try {
+    const { verifySmtpConnection, getEmailConfig, validateEmailEnv } = await import('./services/emailService.js');
+    const envCheck = validateEmailEnv();
+    const config = getEmailConfig();
+    const smtpCheck = await verifySmtpConnection();
+
+    const frontendBaseUrl = (process.env.FRONTEND_URL || process.env.CLIENT_ORIGIN || 'https://visartech-people.vercel.app').replace(/\/+$/, '');
+
+    res.status(smtpCheck.success ? 200 : 503).json({
+      status: smtpCheck.success ? 'healthy' : 'degraded',
+      emailService: {
+        configured: config.isConfigured,
+        missingEnvVars: envCheck.missing,
+        smtpHost: config.host,
+        smtpPort: config.port,
+        smtpSecure: config.secure,
+        userConfigured: Boolean(config.user),
+        passConfigured: Boolean(config.pass),
+        fromConfigured: Boolean(config.from),
+        frontendUrlConfigured: Boolean(process.env.FRONTEND_URL || process.env.CLIENT_ORIGIN),
+        frontendUrl: frontendBaseUrl,
+      },
+      smtpVerification: {
+        success: smtpCheck.success,
+        message: smtpCheck.message,
+      },
+      timestamp: new Date().toISOString(),
+      timezone: 'America/Chicago',
+    });
+  } catch (err) {
+    res.status(500).json({
+      status: 'error',
+      message: err.message,
+    });
+  }
+});
+
 // -------------------------------------------------------------
 // Core Business API Routes
 // -------------------------------------------------------------

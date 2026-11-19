@@ -200,12 +200,15 @@ export async function createEmployee(req, res) {
     await newEmployee.save();
 
     // 6. Send invitation link if real address and not test environment
-    const frontendUrl = process.env.FRONTEND_URL || process.env.CLIENT_ORIGIN || 'http://localhost:3000';
-    const invitationUrl = `${frontendUrl}/accept-invitation/${rawInvitationToken}`;
+    const frontendBase = (process.env.FRONTEND_URL || process.env.CLIENT_ORIGIN || 'https://visartech-people.vercel.app').replace(/\/+$/, '');
+    const invitationUrl = `${frontendBase}/accept-invitation?token=${rawInvitationToken}`;
 
     let emailSent = false;
+    let emailDeliveryError = null;
+
     if (!cleanEmail.endsWith('.demo') && process.env.NODE_ENV !== 'test') {
       try {
+        console.log(`[Employee Enrollment] Dispatching onboarding invitation to: ${cleanEmail}`);
         const emailResult = await sendEmployeeInvitationEmail({
           to: cleanEmail,
           name: `${firstName.trim()} ${lastName.trim()}`,
@@ -214,17 +217,30 @@ export async function createEmployee(req, res) {
           department: department.trim(),
           loginUrl: invitationUrl,
         });
-        emailSent = emailResult.success;
+
+        if (emailResult.success) {
+          emailSent = true;
+          console.log(`[Employee Enrollment] Invitation email successfully dispatched to ${cleanEmail}. MessageId: ${emailResult.messageId}`);
+        } else {
+          emailDeliveryError = emailResult.message || 'SMTP server rejected email delivery.';
+          console.error(`[Employee Enrollment] Invitation email delivery failed for ${cleanEmail}: ${emailDeliveryError}`);
+        }
       } catch (emailErr) {
-        console.warn('Could not send employee invitation email:', emailErr.message);
+        emailDeliveryError = emailErr.message || 'Unexpected SMTP error during dispatch.';
+        console.error(`[Employee Enrollment] Exception while sending invitation to ${cleanEmail}:`, emailErr.message);
       }
+    } else if (cleanEmail.endsWith('.demo')) {
+      console.log(`[Employee Enrollment] Demo email detected (${cleanEmail}), simulated invitation generated.`);
     }
 
     return res.status(201).json({
       success: true,
-      message: `Employee ${cleanEmployeeId} (${firstName} ${lastName}) enrolled successfully. Invitation link generated.`,
+      message: emailSent
+        ? `Employee ${cleanEmployeeId} (${firstName} ${lastName}) enrolled successfully and invitation email sent.`
+        : `Employee ${cleanEmployeeId} (${firstName} ${lastName}) enrolled successfully.`,
       employee: newEmployee.toJSON(),
       invitationSent: emailSent,
+      invitationError: emailSent ? null : emailDeliveryError,
     });
   } catch (err) {
     if (err.code === 11000) {
@@ -443,12 +459,15 @@ export async function resendEmployeeInvitation(req, res) {
     const rawToken = employee.generateInvitationToken();
     await employee.save();
 
-    const frontendUrl = process.env.FRONTEND_URL || process.env.CLIENT_ORIGIN || 'http://localhost:3000';
-    const invitationUrl = `${frontendUrl}/accept-invitation/${rawToken}`;
+    const frontendBase = (process.env.FRONTEND_URL || process.env.CLIENT_ORIGIN || 'https://visartech-people.vercel.app').replace(/\/+$/, '');
+    const invitationUrl = `${frontendBase}/accept-invitation?token=${rawToken}`;
 
     let emailSent = false;
+    let emailDeliveryError = null;
+
     if (!employee.email.endsWith('.demo') && process.env.NODE_ENV !== 'test') {
       try {
+        console.log(`[Resend Invitation] Re-dispatching invitation link to: ${employee.email}`);
         const emailResult = await sendEmployeeInvitationEmail({
           to: employee.email,
           name: employee.name || `${employee.firstName} ${employee.lastName}`,
@@ -457,16 +476,29 @@ export async function resendEmployeeInvitation(req, res) {
           department: employee.department,
           loginUrl: invitationUrl,
         });
-        emailSent = emailResult.success;
+
+        if (emailResult.success) {
+          emailSent = true;
+          console.log(`[Resend Invitation] Invitation email successfully dispatched to ${employee.email}. MessageId: ${emailResult.messageId}`);
+        } else {
+          emailDeliveryError = emailResult.message || 'SMTP server rejected email delivery.';
+          console.error(`[Resend Invitation] Delivery failed for ${employee.email}: ${emailDeliveryError}`);
+        }
       } catch (emailErr) {
-        console.warn('Could not resend employee invitation email:', emailErr.message);
+        emailDeliveryError = emailErr.message || 'Unexpected SMTP error during dispatch.';
+        console.error(`[Resend Invitation] Exception while resending invitation to ${employee.email}:`, emailErr.message);
       }
+    } else if (employee.email.endsWith('.demo')) {
+      console.log(`[Resend Invitation] Demo email detected (${employee.email}), fresh simulated invitation generated.`);
     }
 
     return res.status(200).json({
       success: true,
-      message: `A fresh invitation link has been generated and sent to ${employee.email}.`,
+      message: emailSent
+        ? `A fresh invitation link has been generated and sent to ${employee.email}.`
+        : `A fresh invitation link has been generated for ${employee.email}.`,
       invitationSent: emailSent,
+      invitationError: emailSent ? null : emailDeliveryError,
     });
   } catch (err) {
     return res.status(500).json({

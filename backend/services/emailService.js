@@ -32,11 +32,13 @@ export function getEmailConfig() {
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
   const port = parseInt(process.env.SMTP_PORT || '465', 10);
   const secure = process.env.SMTP_SECURE === 'false' ? false : (port === 465 || process.env.SMTP_SECURE === 'true');
-  const user = process.env.SMTP_USER || 'kumarabhinandan1307@gmail.com';
-  const pass = process.env.SMTP_APP_PASSWORD || '';
+  const user = (process.env.SMTP_USER || process.env.EMAIL_USER || process.env.GMAIL_USER || 'kumarabhinandan1307@gmail.com').trim();
+  const rawPass = process.env.SMTP_APP_PASSWORD || process.env.SMTP_PASS || process.env.EMAIL_PASS || process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASSWORD || '';
+  // Strip any internal spaces from 16-character Google App Passwords
+  const pass = rawPass.replace(/\s+/g, '');
   const from = process.env.EMAIL_FROM || `"VISARTECH People" <${user}>`;
 
-  const isConfigured = Boolean(user && pass && pass.trim().length > 0);
+  const isConfigured = Boolean(user && pass && pass.length > 0);
 
   return {
     host,
@@ -55,10 +57,10 @@ export function getEmailConfig() {
  */
 export function validateEmailEnv() {
   const missing = [];
-  if (!process.env.SMTP_USER && !process.env.EMAIL_USER) {
+  if (!process.env.SMTP_USER && !process.env.EMAIL_USER && !process.env.GMAIL_USER) {
     missing.push('SMTP_USER');
   }
-  if (!process.env.SMTP_APP_PASSWORD && !process.env.EMAIL_PASS) {
+  if (!process.env.SMTP_APP_PASSWORD && !process.env.SMTP_PASS && !process.env.EMAIL_PASS && !process.env.GMAIL_APP_PASSWORD && !process.env.SMTP_PASSWORD) {
     missing.push('SMTP_APP_PASSWORD');
   }
   return {
@@ -88,10 +90,10 @@ export function getTransporter() {
         user: config.user,
         pass: config.pass,
       },
-      // Timeouts to prevent hanging sockets
-      connectionTimeout: 10000, // 10s
-      greetingTimeout: 5000,    // 5s
-      socketTimeout: 15000,     // 15s
+      family: 4, // Force IPv4 DNS resolution to prevent container IPv6 routing issues on Render
+      connectionTimeout: 15000, // 15s
+      greetingTimeout: 10000,    // 10s
+      socketTimeout: 30000,     // 30s
     });
   }
 
@@ -395,8 +397,8 @@ export function getInvitationEmailTemplate({
   temporaryPassword,
   loginUrl,
 }) {
-  const title = 'Welcome to VISARTECH People';
-  const previewText = `Your employee workspace account has been created on VISARTECH People.`;
+  const title = 'Welcome to VISARTECH People — Complete Your Account Setup';
+  const previewText = `Your employee workspace account has been created on VISARTECH People. Set up your password to begin.`;
 
   const bodyContent = `
     <h2 style="font-size: 18px; font-weight: 700; color: #0F172A; margin: 0 0 16px 0;">
@@ -406,7 +408,7 @@ export function getInvitationEmailTemplate({
       Hello <strong>${name}</strong>,
     </p>
     <p style="font-size: 14px; margin: 0 0 20px 0; color: #334155;">
-      Your official account on the <strong>VISARTECH People</strong> HRMS platform is now ready. Below are your employee onboarding details:
+      Your employee account on the <strong>VISARTECH People</strong> HRMS platform is now ready. Below are your employee onboarding details:
     </p>
 
     <table style="width: 100%; background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; margin: 20px 0; padding: 12px 16px; font-size: 13px;">
@@ -426,18 +428,22 @@ export function getInvitationEmailTemplate({
       ` : ''}
     </table>
 
+    <p style="font-size: 14px; margin: 0 0 20px 0; color: #334155;">
+      Please click the button below to choose your password and activate your workspace account:
+    </p>
+
     <div class="button-container">
       <a href="${loginUrl}" class="button" target="_blank" rel="noopener noreferrer">
-        Sign In to Your Workspace
+        Set Up Password & Activate Account
       </a>
     </div>
 
     <div class="notice-box">
-      <strong>Important:</strong> For security, please sign in promptly and update your account password under <strong>Profile & Settings</strong>.
+      <strong>Security Notice:</strong> This single-use onboarding invitation link is valid for <strong>48 hours</strong>. It will allow you to create your confidential password and immediately access your workspace.
     </div>
 
     <p style="font-size: 12px; color: #64748B; margin-top: 24px;">
-      Sign in URL:
+      If the button above does not work, copy and paste this URL directly into your browser:
     </p>
     <div class="link-fallback">${loginUrl}</div>
   `;
@@ -449,11 +455,12 @@ export function getInvitationEmailTemplate({
     `Employee ID: ${employeeId}\n` +
     `Role: ${jobTitle} (${department})\n` +
     (temporaryPassword ? `Temporary Password: ${temporaryPassword}\n` : '') +
-    `Sign in here: ${loginUrl}\n\n` +
-    `Please change your temporary password upon your first sign in.\n\n` +
+    `Click or paste the link below to set up your password and activate your account:\n` +
+    `${loginUrl}\n\n` +
+    `This single-use invitation link expires in 48 hours.\n\n` +
     `VISARTECH People — One Platform. Every People Operation.`;
 
-  return { subject: 'Welcome to VISARTECH People — Account Setup', html, text };
+  return { subject: 'Welcome to VISARTECH People — Account Setup & Password Creation', html, text };
 }
 
 /**
@@ -554,6 +561,7 @@ export async function sendEmail({ to, subject, html, text }) {
   }
 
   try {
+    console.log(`[EmailService] Attempting delivery to: ${to.trim().toLowerCase()}`);
     const info = await transporter.sendMail({
       from: config.from,
       to: to.trim().toLowerCase(),
@@ -565,12 +573,14 @@ export async function sendEmail({ to, subject, html, text }) {
     const isAccepted = info.accepted && info.accepted.length > 0;
 
     if (!isAccepted) {
+      console.warn(`[EmailService] Email not accepted by SMTP recipient: ${to}`);
       return {
         success: false,
         message: 'Email was not accepted by SMTP recipient server.',
       };
     }
 
+    console.log(`[EmailService] Email delivered successfully. MessageId: ${info.messageId}`);
     return {
       success: true,
       messageId: info.messageId,
@@ -579,12 +589,16 @@ export async function sendEmail({ to, subject, html, text }) {
   } catch (err) {
     let cleanError = 'Failed to deliver email.';
     if (err.code === 'EAUTH') {
-      cleanError = 'SMTP authentication failure. Google App Password may be invalid or expired.';
-    } else if (err.code === 'ETIMEDOUT') {
+      cleanError = 'SMTP authentication failure. Google App Password may be invalid, missing, or expired.';
+    } else if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKETTIMEDOUT') {
       cleanError = 'Connection to SMTP server timed out.';
+    } else if (err.code === 'ECONNREFUSED') {
+      cleanError = 'Connection refused by SMTP server.';
+    } else if (err.message) {
+      cleanError = `SMTP Delivery Error: ${err.message}`;
     }
 
-    console.error('[EmailService Error]:', cleanError);
+    console.error(`[EmailService Error]: Code=${err.code || 'UNKNOWN'} Reason=${cleanError}`);
     return {
       success: false,
       message: cleanError,

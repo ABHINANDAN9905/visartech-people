@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { 
   Building2, 
   Lock, 
@@ -20,7 +20,9 @@ import Input from '../components/common/Input';
 import Badge from '../components/common/Badge';
 
 export default function AcceptInvitation() {
-  const { token } = useParams();
+  const { token: routeToken } = useParams();
+  const [searchParams] = useSearchParams();
+  const token = routeToken || searchParams.get('token') || '';
   const navigate = useNavigate();
 
   const [isLoading, setIsLoading] = useState(true);

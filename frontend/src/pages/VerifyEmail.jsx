@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom';
 import {
   Building2,
   CheckCircle2,
@@ -15,7 +15,9 @@ import Button from '../components/common/Button';
 import Input from '../components/common/Input';
 
 export default function VerifyEmail() {
-  const { token } = useParams();
+  const { token: routeToken } = useParams();
+  const [searchParams] = useSearchParams();
+  const token = routeToken || searchParams.get('token') || '';
   const navigate = useNavigate();
 
   const [status, setStatus] = useState('loading'); // 'loading' | 'success' | 'error'
