@@ -119,7 +119,17 @@ export default function EmployeeFormModal({
       onClose();
     } catch (err) {
       setIsSubmitting(false);
-      setServerError(err.message || 'Operation failed. Please verify employee details.');
+      const isTimeout =
+        err.isTimeout ||
+        err.name === 'AbortError' ||
+        err.message?.toLowerCase().includes('timed out') ||
+        err.message?.toLowerCase().includes('timeout');
+
+      const userMessage = isTimeout
+        ? 'Server is waking up from sleep mode. Please wait a few moments and try again.'
+        : (err.message || 'Operation failed. Please verify employee details.');
+
+      setServerError(userMessage);
     }
   };
 
@@ -195,7 +205,7 @@ export default function EmployeeFormModal({
             <div>
               <p className="font-bold text-sm">Review Employee Details</p>
               <p className="text-slate-600 mt-0.5">
-                Confirming will persist this employee profile into local storage and update real-time directory metrics.
+                Confirming will securely enroll this employee in the cloud database, trigger onboarding invitations, and update real-time directory metrics.
               </p>
             </div>
           </div>

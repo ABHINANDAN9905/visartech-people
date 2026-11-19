@@ -24,6 +24,49 @@ export function getApiBaseUrl() {
 export const API_BASE_URL = getApiBaseUrl();
 const TOKEN_KEY = 'visartech_people_auth_token';
 
+// Singleton guard to ensure wake-up ping triggers only once on application initialization
+let wakeUpTriggered = false;
+
+/**
+ * Lightweight, non-blocking backend wake-up ping.
+ * Triggers Render instance spin-up from cold sleep without blocking page loads or login.
+ */
+export function wakeUpBackend() {
+  if (wakeUpTriggered) return;
+  wakeUpTriggered = true;
+
+  try {
+    const baseUrl = getApiBaseUrl();
+    const healthUrl = baseUrl.endsWith('/api') ? `${baseUrl}/health` : `${baseUrl}/api/health`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 65000); // 65s wake-up window
+
+    fetch(healthUrl, {
+      method: 'GET',
+      credentials: 'include',
+      signal: controller.signal,
+    })
+      .then((res) => {
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          console.debug('[VISARTECH API] Production backend is online and responsive.');
+        }
+      })
+      .catch((err) => {
+        clearTimeout(timeoutId);
+        console.debug('[VISARTECH API] Background wake-up request captured:', err.message);
+      });
+  } catch {
+    // Non-blocking; failsafe
+  }
+}
+
+// Auto-trigger background wake-up once in browser environment
+if (typeof window !== 'undefined') {
+  wakeUpBackend();
+}
+
 export function getStoredToken() {
   try {
     return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY) || null;
@@ -58,11 +101,13 @@ export async function apiFetch(endpoint, options = {}) {
   };
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), options.timeout || 10000);
+  // Default timeout 60 seconds to accommodate Render free-tier cold starts (30-50s)
+  const timeoutMs = options.timeout || 60000;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(url, {
-      credentials: 'include', // Ensure HttpOnly cookies are transported across localhost origins
+      credentials: 'include', // Ensure HttpOnly cookies are transported across cross-origin domains
       ...options,
       headers,
       signal: controller.signal,
@@ -88,10 +133,15 @@ export async function apiFetch(endpoint, options = {}) {
     };
   } catch (err) {
     clearTimeout(timeoutId);
+    const isTimeout = err.name === 'AbortError';
     return {
       success: false,
       isOffline: true,
-      message: err.name === 'AbortError' ? 'API request timed out' : 'Backend API is unreachable',
+      isTimeout,
+      isNetworkError: !isTimeout,
+      message: isTimeout
+        ? 'API request timed out. Server may be waking up from sleep mode.'
+        : 'Backend API is unreachable. Please verify network connectivity.',
       error: err.message,
     };
   }

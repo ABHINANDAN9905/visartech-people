@@ -29,12 +29,20 @@ export const DEMO_ACCOUNTS = {
 };
 
 const SESSION_STORAGE_KEY = 'visartech_people_demo_session';
+const isDemoModeEnabled = import.meta.env?.VITE_ENABLE_DEMO_MODE === 'true';
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     try {
       const stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
-      return stored ? JSON.parse(stored) : null;
+      if (!stored) return null;
+      const parsed = JSON.parse(stored);
+      // In production (demo mode disabled), never restore an unauthenticated local session without a valid token
+      if (!isDemoModeEnabled && !getStoredToken()) {
+        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+        return null;
+      }
+      return parsed;
     } catch {
       return null;
     }
@@ -61,7 +69,13 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const restoreSession = async () => {
       const token = getStoredToken();
-      if (!token && !sessionStorage.getItem(SESSION_STORAGE_KEY)) return;
+      if (!token) {
+        if (!isDemoModeEnabled) {
+          sessionStorage.removeItem(SESSION_STORAGE_KEY);
+          setUser(null);
+        }
+        return;
+      }
 
       try {
         const res = await api.get('/auth/me');
@@ -97,7 +111,7 @@ export function AuthProvider({ children }) {
     restoreSession();
   }, []);
 
-  // Login Handler (Backend API first, with graceful offline demo fallback)
+  // Login Handler (Backend API first, with graceful offline demo fallback ONLY when enabled)
   const login = async (identifier, password) => {
     setIsLoading(true);
 
@@ -106,6 +120,9 @@ export function AuthProvider({ children }) {
     const cleanEmpId = rawIdentifier.toUpperCase();
 
     // 1. Attempt Real Backend API Authentication
+    let apiErrorMsg = null;
+    let isTimeout = false;
+
     try {
       const apiRes = await api.post('/auth/login', {
         identifier: rawIdentifier,
@@ -141,19 +158,39 @@ export function AuthProvider({ children }) {
           user: authenticatedUser,
           isBackend: true,
         };
-      } else if (!apiRes.isOffline) {
-        // Backend returned rejection (e.g. 401 invalid credentials, 400 validation error)
+      }
+
+      // If backend responded with rejection (e.g. 401 invalid credentials, 400 validation error)
+      if (!apiRes.isOffline) {
         setIsLoading(false);
         return {
           success: false,
           message: apiRes.message || 'Invalid credentials. Please check your login details and password.',
         };
       }
+
+      // Backend was offline or timed out
+      isTimeout = apiRes.isTimeout || apiRes.message?.toLowerCase().includes('timed out');
+      apiErrorMsg = isTimeout
+        ? 'Server is waking up from sleep mode. Please wait a few moments and try again.'
+        : (apiRes.message || 'Backend API is unreachable. Please verify network connectivity.');
     } catch (err) {
-      console.warn('Backend login attempt encountered an exception, checking offline demo accounts:', err);
+      console.warn('Backend login attempt encountered an exception:', err);
+      isTimeout = err.name === 'AbortError' || err.message?.toLowerCase().includes('timed out');
+      apiErrorMsg = isTimeout
+        ? 'Server is waking up from sleep mode. Please wait a few moments and try again.'
+        : 'Backend server connection error. Please try again.';
     }
 
-    // 2. Offline Fallback to Demo Accounts
+    // 2. Offline Fallback to Demo Accounts ONLY if explicitly enabled
+    if (!isDemoModeEnabled) {
+      setIsLoading(false);
+      return {
+        success: false,
+        message: apiErrorMsg || 'Backend service is unavailable. Please try again in a few moments.',
+      };
+    }
+
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     const matchedAccount = Object.values(DEMO_ACCOUNTS).find(

@@ -4,7 +4,7 @@
  * All employee profiles, emails, phone numbers, and compensation figures are 100% fictional.
  */
 
-import api from './apiClient';
+import api from './apiClient.js';
 
 const STORAGE_KEY = 'visartech_employees_data';
 
@@ -565,59 +565,36 @@ export async function addEmployeeBackend(employeeData) {
  * Update employee via backend with local cache update
  */
 export async function updateEmployeeBackend(id, updatedFields) {
-  try {
-    const res = await api.put(`/employees/${id}`, updatedFields);
-    if (res.success && res.employee) {
-      await fetchEmployeesFromBackend();
-      return res.employee;
-    } else if (res.message) {
-      throw new Error(res.message);
-    }
-  } catch (err) {
-    if (!err.isOffline) {
-      throw err;
-    }
+  const res = await api.put(`/employees/${id}`, updatedFields);
+  if (res.success && res.employee) {
+    await fetchEmployeesFromBackend();
+    return res.employee;
   }
-  return updateEmployee(id, updatedFields);
+  const errorMsg = res.message || res.data?.message || 'Failed to update employee record on backend';
+  throw new Error(errorMsg);
 }
 
 /**
  * Safely deactivate employee via backend
  */
 export async function deactivateEmployeeBackend(id) {
-  try {
-    const res = await api.delete(`/employees/${id}`);
-    if (res.success) {
-      await fetchEmployeesFromBackend();
-      return true;
-    } else if (res.message) {
-      throw new Error(res.message);
-    }
-  } catch (err) {
-    if (!err.isOffline) {
-      throw err;
-    }
+  const res = await api.delete(`/employees/${id}`);
+  if (res.success) {
+    await fetchEmployeesFromBackend();
+    return true;
   }
-  return updateEmployee(id, { employmentStatus: 'Inactive' });
+  const errorMsg = res.message || res.data?.message || 'Failed to deactivate employee on backend';
+  throw new Error(errorMsg);
 }
 
 /**
  * Resend employee invitation via backend
  */
 export async function resendEmployeeInvitationBackend(id) {
-  try {
-    const res = await api.post(`/employees/${id}/resend-invitation`);
-    if (res.success) {
-      return res;
-    }
-    throw new Error(res.message || 'Failed to resend employee invitation.');
-  } catch (err) {
-    if (!err.isOffline) {
-      throw err;
-    }
-    return {
-      success: true,
-      message: 'Demo mode: Fresh invitation link generated.',
-    };
+  const res = await api.post(`/employees/${id}/resend-invitation`);
+  if (res.success) {
+    return res;
   }
+  const errorMsg = res.message || res.data?.message || 'Failed to resend employee invitation.';
+  throw new Error(errorMsg);
 }
