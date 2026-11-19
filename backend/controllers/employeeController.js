@@ -224,13 +224,13 @@ export async function createEmployee(req, res) {
           await newEmployee.save();
           console.log(`[Employee Enrollment] Invitation email successfully dispatched to ${cleanEmail}. MessageId: ${emailResult.messageId}`);
         } else {
-          emailDeliveryError = emailResult.message || 'SMTP server rejected email delivery.';
+          emailDeliveryError = emailResult.message || 'Email delivery failed.';
           newEmployee.invitationStatus = 'FAILED';
           await newEmployee.save();
           console.error(`[Employee Enrollment] Invitation email delivery failed for ${cleanEmail}: ${emailDeliveryError}`);
         }
       } catch (emailErr) {
-        emailDeliveryError = emailErr.message || 'Unexpected SMTP error during dispatch.';
+        emailDeliveryError = emailErr.message || 'Unexpected error during dispatch.';
         newEmployee.invitationStatus = 'FAILED';
         await newEmployee.save();
         console.error(`[Employee Enrollment] Exception while sending invitation to ${cleanEmail}:`, emailErr.message);
@@ -492,13 +492,13 @@ export async function resendEmployeeInvitation(req, res) {
           await employee.save();
           console.log(`[Resend Invitation] Invitation email successfully dispatched to ${employee.email}. MessageId: ${emailResult.messageId}`);
         } else {
-          emailDeliveryError = emailResult.message || 'SMTP server rejected email delivery.';
+          emailDeliveryError = emailResult.message || 'Email delivery failed.';
           employee.invitationStatus = 'FAILED';
           await employee.save();
           console.error(`[Resend Invitation] Delivery failed for ${employee.email}: ${emailDeliveryError}`);
         }
       } catch (emailErr) {
-        emailDeliveryError = emailErr.message || 'Unexpected SMTP error during dispatch.';
+        emailDeliveryError = emailErr.message || 'Unexpected error during dispatch.';
         employee.invitationStatus = 'FAILED';
         await employee.save();
         console.error(`[Resend Invitation] Exception while resending invitation to ${employee.email}:`, emailErr.message);

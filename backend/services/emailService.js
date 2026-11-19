@@ -1,17 +1,20 @@
 /**
- * Gmail Email Delivery Service — VISARTECH People HRMS
+ * Email Delivery Service — VISARTECH People HRMS
  *
- * Provides resilient, secure email delivery using Nodemailer and Gmail SMTP.
+ * Primary Production Delivery: Resend HTTPS REST API (Port 443 HTTPS).
+ * Eliminates Render Free Tier SMTP port blocking (ports 25, 465, 587 blocked by Render).
+ *
  * Configured via environment variables:
- *  - SMTP_HOST (defaults to 'smtp.gmail.com')
- *  - SMTP_PORT (defaults to 465)
- *  - SMTP_SECURE (defaults to true for port 465)
- *  - SMTP_USER (e.g. 'kumarabhinandan1307@gmail.com')
- *  - SMTP_APP_PASSWORD (16-character Google App Password)
- *  - EMAIL_FROM (e.g. '"VISARTECH People" <kumarabhinandan1307@gmail.com>')
+ *  - RESEND_API_KEY (Official Resend API key e.g. 're_...')
+ *  - EMAIL_FROM (defaults to 'VISARTECH People <onboarding@resend.dev>')
+ *  - FRONTEND_URL (defaults to 'https://visartech-people.vercel.app')
+ *
+ * Optional Local Development Fallback:
+ *  - SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_APP_PASSWORD
  *
  * Security Rules:
- *  - App passwords are NEVER logged or exposed in error messages.
+ *  - API keys and passwords are NEVER logged or exposed in error messages or health checks.
+ *  - Email delivery is only marked successful when Resend confirms HTTP 200/201 with an accepted message ID.
  *  - Safe fallback when credentials are not yet configured.
  *  - All templates feature responsive HTML with inline CSS and plain text versions.
  */
@@ -26,42 +29,90 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 /**
+ * Parse a standard From header string into name and email address components
+ * e.g. '"VISARTECH People" <kumarabhinandan1307@gmail.com>' -> { name: 'VISARTECH People', email: 'kumarabhinandan1307@gmail.com' }
+ */
+export function parseEmailFrom(fromStr) {
+  if (!fromStr || typeof fromStr !== 'string') {
+    return { name: 'VISARTECH People', email: 'kumarabhinandan1307@gmail.com' };
+  }
+  const match = fromStr.match(/^(?:"?([^"]*)"?\s)?<?([^>]+)>?$/);
+  if (match) {
+    const rawName = (match[1] || 'VISARTECH People').trim();
+    const rawEmail = (match[2] || fromStr).trim().toLowerCase();
+    return { name: rawName, email: rawEmail };
+  }
+  return { name: 'VISARTECH People', email: fromStr.trim().toLowerCase() };
+}
+
+/**
  * Retrieve sanitized email service configuration
  */
 export function getEmailConfig() {
-  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
-  const port = parseInt(process.env.SMTP_PORT || '465', 10);
-  const secure = process.env.SMTP_SECURE === 'false' ? false : (port === 465 || process.env.SMTP_SECURE === 'true');
-  const user = (process.env.SMTP_USER || process.env.EMAIL_USER || process.env.GMAIL_USER || 'kumarabhinandan1307@gmail.com').trim();
-  const rawPass = process.env.SMTP_APP_PASSWORD || process.env.SMTP_PASS || process.env.EMAIL_PASS || process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASSWORD || '';
-  // Strip any internal spaces from 16-character Google App Passwords
-  const pass = rawPass.replace(/\s+/g, '');
-  const from = process.env.EMAIL_FROM || `"VISARTECH People" <${user}>`;
+  const brevoApiKey = (process.env.BREVO_API_KEY || '').trim();
+  const resendApiKey = (process.env.RESEND_API_KEY || '').trim();
+  const defaultFrom = '"VISARTECH People" <kumarabhinandan1307@gmail.com>';
+  const from = (process.env.EMAIL_FROM || defaultFrom).trim();
+  const parsedFrom = parseEmailFrom(from);
+  const frontendUrl = (process.env.FRONTEND_URL || process.env.CLIENT_ORIGIN || 'https://visartech-people.vercel.app').replace(/\/+$/, '');
 
-  const isConfigured = Boolean(user && pass && pass.length > 0);
+  // Backward compatibility check for local development SMTP
+  const smtpHost = process.env.SMTP_HOST || 'smtp.gmail.com';
+  const smtpPort = parseInt(process.env.SMTP_PORT || '465', 10);
+  const smtpSecure = process.env.SMTP_SECURE === 'false' ? false : (smtpPort === 465 || process.env.SMTP_SECURE === 'true');
+  const smtpUser = (process.env.SMTP_USER || process.env.EMAIL_USER || process.env.GMAIL_USER || '').trim();
+  const rawPass = process.env.SMTP_APP_PASSWORD || process.env.SMTP_PASS || process.env.EMAIL_PASS || process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASSWORD || '';
+  const smtpPass = rawPass.replace(/\s+/g, '');
+  const hasSmtp = Boolean(smtpUser && smtpPass);
+
+  const isBrevoConfigured = Boolean(brevoApiKey && brevoApiKey.length > 0);
+  const isResendConfigured = Boolean(resendApiKey && resendApiKey.length > 0);
+
+  // In production (e.g. Render Free Tier), outbound SMTP is blocked at network level.
+  // Never silently fall back to blocked SMTP in production.
+  const isProduction = process.env.NODE_ENV === 'production';
+  let provider = 'none';
+  if (isBrevoConfigured) {
+    provider = 'brevo';
+  } else if (isResendConfigured) {
+    provider = 'resend';
+  } else if (hasSmtp && !isProduction) {
+    provider = 'smtp';
+  }
+
+  const isConfigured = provider !== 'none';
 
   return {
-    host,
-    port,
-    secure,
-    user,
-    pass,
+    provider,
+    brevoApiKey,
+    isBrevoConfigured,
+    resendApiKey,
+    isResendConfigured,
     from,
+    fromName: parsedFrom.name,
+    fromEmail: parsedFrom.email,
+    frontendUrl,
     isConfigured,
+    // SMTP fields
+    host: smtpHost,
+    port: smtpPort,
+    secure: smtpSecure,
+    user: smtpUser,
+    pass: smtpPass,
+    hasSmtp,
   };
 }
 
 /**
- * Validate that mandatory SMTP environment variables are present
+ * Validate that mandatory environment variables are present
  * @returns {{ valid: boolean, missing: string[] }}
  */
 export function validateEmailEnv() {
   const missing = [];
-  if (!process.env.SMTP_USER && !process.env.EMAIL_USER && !process.env.GMAIL_USER) {
-    missing.push('SMTP_USER');
-  }
-  if (!process.env.SMTP_APP_PASSWORD && !process.env.SMTP_PASS && !process.env.EMAIL_PASS && !process.env.GMAIL_APP_PASSWORD && !process.env.SMTP_PASSWORD) {
-    missing.push('SMTP_APP_PASSWORD');
+  if (!process.env.BREVO_API_KEY && !process.env.RESEND_API_KEY) {
+    if (!process.env.SMTP_USER && !process.env.SMTP_APP_PASSWORD) {
+      missing.push('BREVO_API_KEY');
+    }
   }
   return {
     valid: missing.length === 0,
@@ -72,12 +123,12 @@ export function validateEmailEnv() {
 let transporterInstance = null;
 
 /**
- * Get or initialize the Nodemailer transporter instance
+ * Get or initialize the Nodemailer transporter instance (Local Dev SMTP only)
  */
 export function getTransporter() {
   const config = getEmailConfig();
 
-  if (!config.isConfigured) {
+  if (!config.hasSmtp) {
     return null;
   }
 
@@ -90,10 +141,10 @@ export function getTransporter() {
         user: config.user,
         pass: config.pass,
       },
-      family: 4, // Force IPv4 DNS resolution to prevent container IPv6 routing issues on Render
-      connectionTimeout: 15000, // 15s
-      greetingTimeout: 10000,    // 10s
-      socketTimeout: 30000,     // 30s
+      family: 4,
+      connectionTimeout: 15000,
+      greetingTimeout: 10000,
+      socketTimeout: 30000,
     });
   }
 
@@ -108,52 +159,152 @@ export function resetTransporter() {
 }
 
 /**
- * Verify connection to the SMTP server without sending an email
- * @returns {Promise<{ success: boolean, message: string }>}
+ * Verify Brevo or Resend API connection or local dev SMTP without sending an email
+ * @returns {Promise<{ success: boolean, provider: string, message: string, statusCode?: number }>}
  */
-export async function verifySmtpConnection() {
-  const envCheck = validateEmailEnv();
-  if (!envCheck.valid) {
-    return {
-      success: false,
-      message: `SMTP configuration incomplete. Missing environment variable(s): ${envCheck.missing.join(', ')}`,
-      missing: envCheck.missing,
-    };
+export async function verifyEmailProvider() {
+  const config = getEmailConfig();
+
+  // 1. Brevo HTTPS Account API
+  if (config.provider === 'brevo') {
+    try {
+      const response = await fetch('https://api.brevo.com/v3/account', {
+        method: 'GET',
+        headers: {
+          'api-key': config.brevoApiKey,
+          accept: 'application/json',
+          'User-Agent': 'VISARTECH-People-HRMS/1.0',
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json().catch(() => ({}));
+        const planName = data.plan?.[0]?.type || 'Active';
+        return {
+          success: true,
+          provider: 'brevo',
+          message: `Brevo API connection and credentials verified successfully. Plan: ${planName}. Ready to send emails over HTTPS.`,
+          statusCode: response.status,
+          accountEmail: data.email || null,
+        };
+      }
+
+      if (response.status === 401 || response.status === 403) {
+        return {
+          success: false,
+          provider: 'brevo',
+          message: 'Brevo API authentication failed. Verify that BREVO_API_KEY is valid and active in environment settings.',
+          statusCode: response.status,
+        };
+      }
+
+      const errData = await response.json().catch(() => ({}));
+      return {
+        success: false,
+        provider: 'brevo',
+        message: errData.message || `Brevo API returned HTTP ${response.status}`,
+        statusCode: response.status,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        provider: 'brevo',
+        message: `Network error connecting to Brevo HTTPS API: ${err.message}`,
+      };
+    }
   }
 
-  const transporter = getTransporter();
-  if (!transporter) {
-    return {
-      success: false,
-      message: 'SMTP transporter could not be initialized. Check SMTP_USER and SMTP_APP_PASSWORD in .env.',
-    };
+  // 2. Resend HTTPS API
+  if (config.provider === 'resend') {
+    try {
+      const response = await fetch('https://api.resend.com/api-keys', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${config.resendApiKey}`,
+          'User-Agent': 'VISARTECH-People-HRMS/1.0',
+        },
+      });
+
+      if (response.ok) {
+        return {
+          success: true,
+          provider: 'resend',
+          message: 'Resend API connection and credentials verified successfully. Ready to send emails over HTTPS.',
+          statusCode: response.status,
+        };
+      }
+
+      if (response.status === 401 || response.status === 403) {
+        return {
+          success: false,
+          provider: 'resend',
+          message: 'Resend API authentication failed. Verify that RESEND_API_KEY is valid and active in environment settings.',
+          statusCode: response.status,
+        };
+      }
+
+      const errData = await response.json().catch(() => ({}));
+      return {
+        success: false,
+        provider: 'resend',
+        message: errData.message || `Resend API returned HTTP ${response.status}`,
+        statusCode: response.status,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        provider: 'resend',
+        message: `Network error connecting to Resend HTTPS API: ${err.message}`,
+      };
+    }
   }
 
-  try {
-    await transporter.verify();
-    return {
-      success: true,
-      message: 'SMTP connection verified successfully. Ready to send emails.',
-    };
-  } catch (err) {
-    let cleanMessage = 'SMTP connection failed';
-    if (err.code === 'EAUTH') {
-      cleanMessage = 'SMTP authentication failed. Verify that your Google App Password is correct and active.';
-    } else if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKETTIMEDOUT') {
-      cleanMessage = 'SMTP connection timed out. Check your network or firewall rules for port ' + (process.env.SMTP_PORT || '465') + '.';
-    } else if (err.code === 'ECONNREFUSED') {
-      cleanMessage = 'SMTP connection refused by host. Check SMTP_HOST and SMTP_PORT.';
-    } else {
-      cleanMessage = `SMTP error: ${err.message || 'Unknown network error'}`;
+  // 3. Local SMTP
+  if (config.provider === 'smtp') {
+    const transporter = getTransporter();
+    if (!transporter) {
+      return {
+        success: false,
+        provider: 'smtp',
+        message: 'SMTP transporter could not be initialized.',
+      };
     }
 
-    return {
-      success: false,
-      message: cleanMessage,
-      code: err.code,
-    };
+    try {
+      await transporter.verify();
+      return {
+        success: true,
+        provider: 'smtp',
+        message: 'Local development SMTP connection verified successfully.',
+      };
+    } catch (err) {
+      let cleanMessage = 'SMTP connection failed';
+      if (err.code === 'EAUTH') {
+        cleanMessage = 'SMTP authentication failed. Verify that your Google App Password is correct and active.';
+      } else if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKETTIMEDOUT') {
+        cleanMessage = 'SMTP connection timed out. Outbound SMTP ports (25, 465, 587) are blocked on cloud hosts like Render. Use BREVO_API_KEY instead.';
+      } else {
+        cleanMessage = `SMTP error: ${err.message || 'Unknown network error'}`;
+      }
+
+      return {
+        success: false,
+        provider: 'smtp',
+        message: cleanMessage,
+        code: err.code,
+      };
+    }
   }
+
+  return {
+    success: false,
+    provider: 'none',
+    message: 'Email service is not configured. Missing BREVO_API_KEY in environment variables.',
+    missing: ['BREVO_API_KEY'],
+  };
 }
+
+export const verifySmtpConnection = verifyEmailProvider;
 
 // ---------------------------------------------------------------------------
 // HTML Email Layout and Templates
@@ -539,9 +690,11 @@ export async function sendEmail({ to, subject, html, text }) {
     throw new Error('Email subject is required');
   }
 
+  const cleanRecipient = to.trim().toLowerCase();
   const config = getEmailConfig();
+
   if (!config.isConfigured) {
-    const errorMsg = 'Email service is not configured. Missing SMTP_USER or SMTP_APP_PASSWORD in environment.';
+    const errorMsg = 'Email service is not configured. Missing BREVO_API_KEY in environment.';
     if (process.env.NODE_ENV !== 'test') {
       console.log(`[EmailService] ${errorMsg}`);
     }
@@ -552,59 +705,188 @@ export async function sendEmail({ to, subject, html, text }) {
     };
   }
 
-  const transporter = getTransporter();
-  if (!transporter) {
-    return {
-      success: false,
-      message: 'SMTP transporter unavailable',
-    };
-  }
+  // 1. Preferred Production Engine: Brevo (Sendinblue) HTTPS Transactional API (Port 443)
+  if (config.provider === 'brevo') {
+    try {
+      console.log(`[EmailService/Brevo] Attempting HTTPS delivery to: ${cleanRecipient}`);
 
-  try {
-    console.log(`[EmailService] Attempting delivery to: ${to.trim().toLowerCase()}`);
-    const info = await transporter.sendMail({
-      from: config.from,
-      to: to.trim().toLowerCase(),
-      subject,
-      html,
-      text,
-    });
+      const payload = {
+        sender: {
+          name: config.fromName,
+          email: config.fromEmail,
+        },
+        to: [
+          {
+            email: cleanRecipient,
+          },
+        ],
+        subject: subject.trim(),
+        htmlContent: html,
+        textContent: text,
+      };
 
-    const isAccepted = info.accepted && info.accepted.length > 0;
+      const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': config.brevoApiKey,
+          'Content-Type': 'application/json',
+          accept: 'application/json',
+          'User-Agent': 'VISARTECH-People-HRMS/1.0',
+        },
+        body: JSON.stringify(payload),
+      });
 
-    if (!isAccepted) {
-      console.warn(`[EmailService] Email not accepted by SMTP recipient: ${to}`);
+      const data = await response.json().catch(() => ({}));
+
+      if (response.ok && (data.messageId || data.id)) {
+        const messageId = data.messageId || data.id;
+        console.log(`[EmailService/Brevo] Email accepted successfully. MessageId: ${messageId}`);
+        return {
+          success: true,
+          provider: 'brevo',
+          messageId,
+          message: 'Email accepted by Brevo API for delivery.',
+        };
+      }
+
+      const errMsg = data.message || `Brevo API rejected request with HTTP ${response.status}: ${response.statusText}`;
+      console.error(`[EmailService/Brevo Error]: Status=${response.status} Reason=${errMsg}`);
       return {
         success: false,
-        message: 'Email was not accepted by SMTP recipient server.',
+        provider: 'brevo',
+        statusCode: response.status,
+        message: errMsg,
+      };
+    } catch (err) {
+      console.error(`[EmailService/Brevo Error]: HTTPS dispatch exception: ${err.message}`);
+      return {
+        success: false,
+        provider: 'brevo',
+        message: `Failed to communicate with Brevo HTTPS API: ${err.message}`,
+      };
+    }
+  }
+
+  // 2. Alternative HTTPS Provider: Resend REST API (Port 443)
+  if (config.provider === 'resend') {
+    try {
+      console.log(`[EmailService/Resend] Attempting HTTPS delivery to: ${cleanRecipient}`);
+
+      const payload = {
+        from: config.from,
+        to: [cleanRecipient],
+        subject: subject.trim(),
+        html,
+        text,
+      };
+
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${config.resendApiKey}`,
+          'Content-Type': 'application/json',
+          'User-Agent': 'VISARTECH-People-HRMS/1.0',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (response.ok && data.id) {
+        console.log(`[EmailService/Resend] Email accepted successfully. MessageId: ${data.id}`);
+        return {
+          success: true,
+          provider: 'resend',
+          messageId: data.id,
+          message: 'Email accepted by Resend API for delivery.',
+        };
+      }
+
+      let errMsg = data.message || `Resend API rejected request with HTTP ${response.status}: ${response.statusText}`;
+      if (response.status === 403 && data.message && data.message.includes('own email address')) {
+        errMsg = `Resend Account Restricted: ${data.message} To send to unverified recipient domains, verify your domain in the Resend dashboard (resend.com/domains).`;
+      }
+      console.error(`[EmailService/Resend Error]: Status=${response.status} Reason=${errMsg}`);
+      return {
+        success: false,
+        provider: 'resend',
+        statusCode: response.status,
+        message: errMsg,
+      };
+    } catch (err) {
+      console.error(`[EmailService/Resend Error]: HTTPS dispatch exception: ${err.message}`);
+      return {
+        success: false,
+        provider: 'resend',
+        message: `Failed to communicate with Resend HTTPS API: ${err.message}`,
+      };
+    }
+  }
+
+  // 2. Optional Local Development Fallback: Nodemailer SMTP
+  if (config.provider === 'smtp') {
+    const transporter = getTransporter();
+    if (!transporter) {
+      return {
+        success: false,
+        provider: 'smtp',
+        message: 'SMTP transporter unavailable',
       };
     }
 
-    console.log(`[EmailService] Email delivered successfully. MessageId: ${info.messageId}`);
-    return {
-      success: true,
-      messageId: info.messageId,
-      message: 'Email dispatched successfully.',
-    };
-  } catch (err) {
-    let cleanError = 'Failed to deliver email.';
-    if (err.code === 'EAUTH') {
-      cleanError = 'SMTP authentication failure. Google App Password may be invalid, missing, or expired.';
-    } else if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKETTIMEDOUT') {
-      cleanError = 'Connection to SMTP server timed out.';
-    } else if (err.code === 'ECONNREFUSED') {
-      cleanError = 'Connection refused by SMTP server.';
-    } else if (err.message) {
-      cleanError = `SMTP Delivery Error: ${err.message}`;
-    }
+    try {
+      console.log(`[EmailService/SMTP] Attempting delivery to: ${cleanRecipient}`);
+      const info = await transporter.sendMail({
+        from: config.from,
+        to: cleanRecipient,
+        subject,
+        html,
+        text,
+      });
 
-    console.error(`[EmailService Error]: Code=${err.code || 'UNKNOWN'} Reason=${cleanError}`);
-    return {
-      success: false,
-      message: cleanError,
-      code: err.code,
-    };
+      const isAccepted = info.accepted && info.accepted.length > 0;
+      if (!isAccepted) {
+        console.warn(`[EmailService/SMTP] Email not accepted by SMTP recipient: ${cleanRecipient}`);
+        return {
+          success: false,
+          provider: 'smtp',
+          message: 'Email was not accepted by SMTP recipient server.',
+        };
+      }
+
+      console.log(`[EmailService/SMTP] Email delivered successfully. MessageId: ${info.messageId}`);
+      return {
+        success: true,
+        provider: 'smtp',
+        messageId: info.messageId,
+        message: 'Email dispatched successfully via local SMTP.',
+      };
+    } catch (err) {
+      let cleanError = 'Failed to deliver email.';
+      if (err.code === 'EAUTH') {
+        cleanError = 'SMTP authentication failure. Google App Password may be invalid, missing, or expired.';
+      } else if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKETTIMEDOUT') {
+        cleanError = 'Connection to SMTP server timed out. Render blocks outbound SMTP ports. Configure RESEND_API_KEY instead.';
+      } else if (err.code === 'ECONNREFUSED') {
+        cleanError = 'Connection refused by SMTP server.';
+      } else if (err.message) {
+        cleanError = `SMTP Delivery Error: ${err.message}`;
+      }
+
+      console.error(`[EmailService/SMTP Error]: Code=${err.code || 'UNKNOWN'} Reason=${cleanError}`);
+      return {
+        success: false,
+        provider: 'smtp',
+        message: cleanError,
+        code: err.code,
+      };
+    }
   }
+
+  return {
+    success: false,
+    message: 'No email delivery provider configured.',
+  };
 }
 
 /**

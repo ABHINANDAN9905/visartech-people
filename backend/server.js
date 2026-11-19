@@ -161,33 +161,44 @@ app.get(['/api/health/db', '/health/db'], async (req, res) => {
   });
 });
 
-// 3. Email Delivery & SMTP Diagnostic Health (Safely masked, NO credentials exposed)
+// 3. Email Delivery Diagnostic Health (Brevo / Resend HTTPS API / Providers)
 app.get(['/api/health/email', '/health/email'], async (req, res) => {
   try {
-    const { verifySmtpConnection, getEmailConfig, validateEmailEnv } = await import('./services/emailService.js');
+    const { verifyEmailProvider, getEmailConfig, validateEmailEnv } = await import('./services/emailService.js');
     const envCheck = validateEmailEnv();
     const config = getEmailConfig();
-    const smtpCheck = await verifySmtpConnection();
+    const providerCheck = await verifyEmailProvider();
 
     const frontendBaseUrl = (process.env.FRONTEND_URL || process.env.CLIENT_ORIGIN || 'https://visartech-people.vercel.app').replace(/\/+$/, '');
 
-    res.status(smtpCheck.success ? 200 : 503).json({
-      status: smtpCheck.success ? 'healthy' : 'degraded',
+    // Safely mask Brevo or Resend key prefix (e.g. 'xkeysib...' or 're_abc...' or null) without exposing secret
+    const activeKey = config.brevoApiKey || config.resendApiKey || '';
+    const apiKeyMasked = activeKey ? `${activeKey.slice(0, 8)}...` : null;
+
+    res.status(providerCheck.success ? 200 : (config.isConfigured ? 503 : 200)).json({
+      status: providerCheck.success ? 'healthy' : (config.isConfigured ? 'degraded' : 'unconfigured'),
       emailService: {
+        provider: config.provider,
         configured: config.isConfigured,
-        missingEnvVars: envCheck.missing,
-        smtpHost: config.host,
-        smtpPort: config.port,
-        smtpSecure: config.secure,
-        userConfigured: Boolean(config.user),
-        passConfigured: Boolean(config.pass),
-        fromConfigured: Boolean(config.from),
+        brevoConfigured: config.isBrevoConfigured,
+        resendConfigured: config.isResendConfigured,
+        apiKeyPrefix: apiKeyMasked,
+        fromAddress: config.from,
+        senderEmail: config.fromEmail,
         frontendUrlConfigured: Boolean(process.env.FRONTEND_URL || process.env.CLIENT_ORIGIN),
         frontendUrl: frontendBaseUrl,
+        missingEnvVars: envCheck.missing,
       },
+      providerVerification: {
+        success: providerCheck.success,
+        provider: providerCheck.provider,
+        message: providerCheck.message,
+        statusCode: providerCheck.statusCode || (providerCheck.success ? 200 : null),
+      },
+      // Backward compatibility alias for monitors
       smtpVerification: {
-        success: smtpCheck.success,
-        message: smtpCheck.message,
+        success: providerCheck.success,
+        message: providerCheck.message,
       },
       timestamp: new Date().toISOString(),
       timezone: 'America/Chicago',
